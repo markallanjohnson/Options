@@ -1,4 +1,5 @@
 import sys
+import datetime
 
 from yahoo_fin import stock_info, options
 
@@ -22,32 +23,40 @@ def calculate_hedge(position, ticker="SPY", otm_percent=0.30):
     if not expiration_dates:
         print(f"No expiration dates found for {ticker}.")
         sys.exit(1)
-    # Use the nearest expiration date
-    expiration_date = expiration_dates[0]
+    
+    
+    # Filter expiration dates within the next two months
+    today = datetime.date.today()
+    two_months_later = today + datetime.timedelta(days=60)
+    valid_expiration_dates = [date for date in expiration_dates if today <= datetime.datetime.strptime(date, '%B %d, %Y').date() <= two_months_later]
 
-    # Fetch put options for the ticker for the given expiration date
-    puts = options.get_puts(ticker, expiration_date)
+    # Placeholder for the best put option
+    best_put_option = None
+    for expiration_date in valid_expiration_dates:
+        # Fetch put options for the ticker for the given expiration date
+        puts = options.get_puts(ticker, expiration_date)
+        puts['Strike Difference'] = abs(puts['Strike'] - otm_strike)
+        target_put = puts.nsmallest(1, 'Strike Difference')
+        
+        if target_put.empty:
+            continue
+        
+        put_price = target_put['Last Price'].values[0]
+        implied_volatility = target_put['Implied Volatility'].values[0]
+        
+        if put_price <= 2:
+            if not best_put_option or datetime.datetime.strptime(best_put_option["Expiration Date"], '%B %d, %Y').date() < datetime.datetime.strptime(expiration_date, '%B %d, %Y').date():
+                best_put_option = {
+                    "Current Price": current_price,
+                    "Expiration Date": expiration_date,
+                    "OTM Strike": otm_strike,
+                    "Put Price": put_price,
+                    "Implied Volatility": implied_volatility,
+                    "Contracts to Buy": monthly_budget / (put_price * 100),  # 1 contract = 100 shares
+                    "Total Cost": monthly_budget
+                }
 
-    # Find the put option closest to the calculated OTM strike
-    puts['Strike Difference'] = abs(puts['Strike'] - otm_strike)
-    target_put = puts.nsmallest(1, 'Strike Difference')
-
-    if target_put.empty:
-        return None
-
-    put_price = target_put['Last Price'].values[0]
-    implied_volatility = target_put['Implied Volatility'].values[0]
-    contracts_to_buy = monthly_budget / (put_price * 100)  # 1 contract = 100 shares
-
-    return {
-        "Current Price": current_price,
-        "Expiration Date": expiration_date,
-        "OTM Strike": otm_strike,
-        "Put Price": put_price,
-        "Implied Volatility": implied_volatility,
-        "Contracts to Buy": contracts_to_buy,
-        "Total Cost": contracts_to_buy * put_price * 100
-    }
+    return best_put_option
 
 if __name__ == "__main__":
     position = float(input("Enter your portfolio value: "))
